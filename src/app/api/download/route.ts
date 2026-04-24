@@ -14,9 +14,12 @@ export interface DownloadResult {
 function isValidInstagramUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
     return (
-      parsed.hostname === "www.instagram.com" ||
-      parsed.hostname === "instagram.com"
+      host === "www.instagram.com" ||
+      host === "instagram.com" ||
+      host === "instagr.am" ||
+      host === "www.instagr.am"
     );
   } catch {
     return false;
@@ -43,6 +46,11 @@ export async function POST(req: NextRequest) {
       urlObj.search = ""; // Clear query params like ?igsh=...
       url = urlObj.toString();
       
+      // Ensure it ends with / for consistency
+      if (!url.endsWith("/")) {
+        url += "/";
+      }
+
       // Some scrapers prefer /reel/ over /reels/
       if (url.includes("/reels/")) {
         url = url.replace("/reels/", "/reel/");
@@ -66,11 +74,30 @@ export async function POST(req: NextRequest) {
     // Use instagram-url-direct to extract media URLs
     const result = await instagramGetUrl(url);
 
-    if (
-      !result ||
-      !result.url_list ||
-      result.url_list.length === 0
-    ) {
+    // Prefer media_details for accurate type information
+    let mediaItems: MediaItem[] = [];
+
+    if (result && result.media_details && result.media_details.length > 0) {
+      mediaItems = result.media_details.map((detail: any) => ({
+        url: detail.url,
+        type: detail.type === "video" ? "video" : "image",
+      }));
+    } else if (result && result.url_list && result.url_list.length > 0) {
+      // Fallback to url_list if media_details is missing
+      mediaItems = result.url_list.map((mediaUrl: string) => {
+        const isVideo =
+          mediaUrl.includes(".mp4") ||
+          mediaUrl.includes("video") ||
+          mediaUrl.includes("vid_") ||
+          mediaUrl.toLowerCase().includes("mime=video");
+        return {
+          url: mediaUrl,
+          type: isVideo ? "video" : "image",
+        };
+      });
+    }
+
+    if (mediaItems.length === 0) {
       console.error("[API] No media found for URL:", url, result);
       return NextResponse.json(
         {
@@ -80,19 +107,6 @@ export async function POST(req: NextRequest) {
         { status: 404 }
       );
     }
-
-    const mediaItems: MediaItem[] = result.url_list.map((mediaUrl: string) => {
-      // Detect if it's a video based on URL patterns or content
-      const isVideo =
-        mediaUrl.includes(".mp4") ||
-        mediaUrl.includes("video") ||
-        mediaUrl.includes("vid_") ||
-        mediaUrl.toLowerCase().includes("mime=video");
-      return {
-        url: mediaUrl,
-        type: isVideo ? "video" : "image",
-      };
-    });
 
     console.log(`[API] Success: Found ${mediaItems.length} items.`);
 

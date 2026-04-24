@@ -28,7 +28,8 @@ async function downloadFile(url: string, filename: string): Promise<void> {
 export default function DownloadCard({ item, index, total }: DownloadCardProps) {
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-  const [useProxy, setUseProxy] = useState(false);
+  const isCdnUrl = item.url.includes("fbcdn") || item.url.includes("cdninstagram.com");
+  const [useProxy, setUseProxy] = useState(isCdnUrl);
   const [imgError, setImgError] = useState(false);
 
   const label = total > 1 ? `Media ${index + 1} of ${total}` : "Media";
