@@ -1,26 +1,165 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --ig-purple: #0ea5e9;
+    --ig-red: #8b5cf6;
+    --ig-orange: #f43f5e;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: rgba(14, 165, 233, 0.4);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #020617;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(to bottom, #0ea5e9, #8b5cf6);
+    border-radius: 3px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .ig-gradient {
+    background: linear-gradient(135deg, #0ea5e9, #8b5cf6, #f43f5e);
+  }
+
+  .ig-gradient-text {
+    background: linear-gradient(135deg, #38bdf8, #a78bfa, #fb7185);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .glass-input {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .glass-input:focus {
+    border-color: rgba(14, 165, 233, 0.6);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15), 0 0 20px rgba(14, 165, 233, 0.1);
+    outline: none;
+  }
+
+  .ig-button {
+    background: linear-gradient(135deg, #0ea5e9, #8b5cf6, #f43f5e);
+    background-size: 200% 200%;
+    animation: gradientShift 4s ease infinite;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  }
+
+  .ig-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(14, 165, 233, 0.5);
+  }
+
+  .ig-button:active:not(:disabled) {
+    transform: translateY(0px);
+  }
+
+  .ig-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .glow-orb {
+    filter: blur(80px);
+    animation: float 8s ease-in-out infinite;
+  }
+
+  .glow-orb-2 {
+    filter: blur(100px);
+    animation: float 10s ease-in-out infinite reverse;
+  }
+
+  .fade-in {
+    animation: fadeIn 0.6s ease forwards;
+  }
+
+  .slide-up {
+    animation: slideUp 0.5s ease forwards;
+  }
+
+  .pulse-ring {
+    animation: pulseRing 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+  }
+}
+
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-30px) scale(1.05); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseRing {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(14, 165, 233, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
 }
