@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const decoded = decodeURIComponent(url);
+    const decoded = url;
 
     // Only allow Instagram CDN domains
     const allowed = [
