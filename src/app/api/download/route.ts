@@ -26,6 +26,87 @@ function isValidInstagramUrl(url: string): boolean {
   }
 }
 
+// Helper to delay execution
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function tryFetch(url: string, retries = 2): Promise<any> {
+  let lastError: any;
+  
+  for (let i = 0; i <= retries; i++) {
+    try {
+      if (i > 0) {
+        console.log(`[API] Retry ${i} for URL: ${url}`);
+        await delay(1000 * i); // Exponential backoff
+      }
+      
+      const result = await instagramGetUrl(url);
+      
+      // If we got mediaItems, we're good
+      if (result && (result.media_details?.length > 0 || result.url_list?.length > 0)) {
+        return result;
+      }
+      
+      // If we got a result but no media, it might be a block or empty response
+      console.warn(`[API] Attempt ${i+1}: Result received but no media found.`, result);
+      lastError = new Error("No media found in response");
+    } catch (error) {
+      console.error(`[API] Attempt ${i+1} failed:`, error);
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Fallback fetch using manual scraping if the library fails
+ * This is a simplified version and might not catch all cases
+ */
+async function fallbackFetch(url: string): Promise<MediaItem[] | null> {
+  try {
+    console.log(`[API] Attempting fallback fetch for: ${url}`);
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+      },
+    });
+
+    if (!response.ok) return null;
+    const html = await response.text();
+
+    const mediaItems: MediaItem[] = [];
+
+    // Try to find video URL in meta tags
+    const videoMatch = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/i);
+    if (videoMatch && videoMatch[1]) {
+      mediaItems.push({
+        url: videoMatch[1].replace(/&amp;/g, "&"),
+        type: "video",
+      });
+    }
+
+    // Try to find image URL in meta tags
+    const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
+    if (imageMatch && imageMatch[1] && mediaItems.length === 0) {
+      mediaItems.push({
+        url: imageMatch[1].replace(/&amp;/g, "&"),
+        type: "image",
+      });
+    }
+
+    return mediaItems.length > 0 ? mediaItems : null;
+  } catch (error) {
+    console.error("[API] Fallback fetch error:", error);
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -71,44 +152,56 @@ export async function POST(req: NextRequest) {
 
     console.log(`[API] Fetching: ${url}`);
 
-    // Use instagram-url-direct to extract media URLs
-    const result = await instagramGetUrl(url);
-
-    // Prefer media_details for accurate type information
     let mediaItems: MediaItem[] = [];
+    let result: any;
 
-    if (result && result.media_details && result.media_details.length > 0) {
-      mediaItems = result.media_details.map((detail: any) => ({
-        url: detail.url,
-        type: detail.type === "video" ? "video" : "image",
-      }));
-    } else if (result && result.url_list && result.url_list.length > 0) {
-      // Fallback to url_list if media_details is missing
-      mediaItems = result.url_list.map((mediaUrl: string) => {
-        const isVideo =
-          mediaUrl.includes(".mp4") ||
-          mediaUrl.includes("video") ||
-          mediaUrl.includes("vid_") ||
-          mediaUrl.toLowerCase().includes("mime=video");
-        return {
-          url: mediaUrl,
-          type: isVideo ? "video" : "image",
-        };
-      });
+    try {
+      // Use retry logic for better reliability on Vercel
+      result = await tryFetch(url);
+
+      if (result && result.media_details && result.media_details.length > 0) {
+        mediaItems = result.media_details.map((detail: any) => ({
+          url: detail.url,
+          type: detail.type === "video" ? "video" : "image",
+        }));
+      } else if (result && result.url_list && result.url_list.length > 0) {
+        mediaItems = result.url_list.map((mediaUrl: string) => {
+          const isVideo =
+            mediaUrl.includes(".mp4") ||
+            mediaUrl.includes("video") ||
+            mediaUrl.includes("vid_") ||
+            mediaUrl.toLowerCase().includes("mime=video");
+          return {
+            url: mediaUrl,
+            type: isVideo ? "video" : "image",
+          };
+        });
+      }
+    } catch (error) {
+      console.warn("[API] Primary fetch failed, trying fallback...", error);
+    }
+
+    // If primary failed or returned nothing, try fallback
+    if (mediaItems.length === 0) {
+      const fallbackResult = await fallbackFetch(url);
+      if (fallbackResult) {
+        mediaItems = fallbackResult;
+        console.log(`[API] Fallback success: Found ${mediaItems.length} items.`);
+      }
     }
 
     if (mediaItems.length === 0) {
-      console.error("[API] No media found for URL:", url, result);
+      console.error("[API] No media found for URL after retries and fallback:", url);
       return NextResponse.json(
         {
           error:
-            "Could not fetch media. The post might be private, deleted, or Instagram is blocking the request. Try again in a few minutes.",
+            "Instagram is currently blocking this request. This often happens on cloud hosting like Vercel. Please try again in a few minutes or try a different link.",
         },
         { status: 404 }
       );
     }
 
-    console.log(`[API] Success: Found ${mediaItems.length} items.`);
+    console.log(`[API] Final Success: Found ${mediaItems.length} items.`);
 
     const response: DownloadResult = {
       mediaItems,
@@ -122,9 +215,9 @@ export async function POST(req: NextRequest) {
     const message =
       error instanceof Error ? error.message : "Unknown error occurred";
 
-    if (message.includes("403") || message.includes("429")) {
+    if (message.includes("403") || message.includes("429") || message.includes("No media found")) {
       return NextResponse.json(
-        { error: "Instagram is temporarily blocking requests. Please try again later." },
+        { error: "Instagram is temporarily blocking requests (Rate Limited). This is common on Vercel. Please try again in a few minutes." },
         { status: 429 }
       );
     }
