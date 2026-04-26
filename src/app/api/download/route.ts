@@ -80,26 +80,70 @@ async function fallbackFetch(url: string): Promise<MediaItem[] | null> {
     if (!response.ok) return null;
     const html = await response.text();
 
-    const mediaItems: MediaItem[] = [];
+    let mediaItems: MediaItem[] = [];
 
-    // Try to find video URL in meta tags
-    const videoMatch = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/i);
-    if (videoMatch && videoMatch[1]) {
-      mediaItems.push({
-        url: videoMatch[1].replace(/&amp;/g, "&"),
-        type: "video",
+    const isReel = url.includes("/reel/") || url.includes("/reels/");
+
+    // Try to find JSON data structures that contain all media (including carousels)
+    const jsonMatches = [
+      ...html.matchAll(/"display_url":"([^"]*)"/g),
+      ...html.matchAll(/"video_url":"([^"]*)"/g)
+    ];
+
+    if (jsonMatches.length > 0) {
+      const uniqueUrls = new Set<string>();
+      jsonMatches.forEach(match => {
+        const url = match[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+        if (!uniqueUrls.has(url)) {
+          uniqueUrls.add(url);
+          const isVideo = url.includes(".mp4") || url.includes("video") || url.includes("mime=video");
+          
+          // Only add if we don't have it yet, or if it's a video (preferring videos)
+          mediaItems.push({ url, type: isVideo ? "video" : "image" });
+        }
       });
     }
 
-    // Try to find image URL in meta tags
-    const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
-    if (imageMatch && imageMatch[1] && mediaItems.length === 0) {
-      mediaItems.push({
-        url: imageMatch[1].replace(/&amp;/g, "&"),
-        type: "image",
+    // Heuristic for carousels: Instagram often lists many display_resources
+    // We should filter to keep only the highest resolution ones
+    if (mediaItems.length > 1) {
+      // Filter out duplicates and keep unique URLs
+      const seen = new Set();
+      mediaItems = mediaItems.filter(item => {
+        const k = item.url.split('?')[0]; // Use base URL as key
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
       });
     }
 
+    // 1. Check og:video tags (if not found in JSON)
+    if (mediaItems.length === 0) {
+      const videoMetaMatch = 
+        html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/i) ||
+        html.match(/<meta[^>]*property="og:video:secure_url"[^>]*content="([^"]*)"/i);
+      
+      if (videoMetaMatch && videoMetaMatch[1]) {
+        mediaItems.push({
+          url: videoMetaMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&"),
+          type: "video",
+        });
+      }
+    }
+
+    // 2. Check og:image tags (if not found in JSON)
+    if (mediaItems.length === 0) {
+      const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
+      if (imageMatch && imageMatch[1]) {
+        const imageUrl = imageMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+        const isVideo = imageUrl.includes(".mp4") || imageUrl.includes("video") || isReel;
+        mediaItems.push({
+          url: imageUrl,
+          type: isVideo ? "video" : "image",
+        });
+      }
+    }
+    
     return mediaItems.length > 0 ? mediaItems : null;
   } catch (error) {
     console.error("[API] Fallback fetch error:", error);
@@ -159,18 +203,40 @@ export async function POST(req: NextRequest) {
       // Use retry logic for better reliability on Vercel
       result = await tryFetch(url);
 
+      const isReel = url.includes("/reel/") || url.includes("/reels/");
+
       if (result && result.media_details && result.media_details.length > 0) {
-        mediaItems = result.media_details.map((detail: any) => ({
-          url: detail.url,
-          type: detail.type === "video" ? "video" : "image",
-        }));
+        mediaItems = result.media_details.map((detail: any) => {
+          const detailType = String(detail.type).toLowerCase();
+          const mediaUrl = detail.url.toLowerCase();
+          const isImage = mediaUrl.includes(".jpg") || mediaUrl.includes(".jpeg") || mediaUrl.includes(".png") || mediaUrl.includes(".webp");
+          const isVideo = !isImage && (
+            detailType === "video" || 
+            mediaUrl.includes(".mp4") || 
+            mediaUrl.includes("video") || 
+            mediaUrl.includes("_v") ||
+            mediaUrl.includes("mime=video") ||
+            (isReel && result.media_details.length === 1)
+          );
+
+          return {
+            url: detail.url,
+            type: isVideo ? "video" : "image",
+          };
+        });
       } else if (result && result.url_list && result.url_list.length > 0) {
         mediaItems = result.url_list.map((mediaUrl: string) => {
-          const isVideo =
-            mediaUrl.includes(".mp4") ||
-            mediaUrl.includes("video") ||
-            mediaUrl.includes("vid_") ||
-            mediaUrl.toLowerCase().includes("mime=video");
+          const lowerUrl = mediaUrl.toLowerCase();
+          const isImage = lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png") || lowerUrl.includes(".webp");
+          const isVideo = !isImage && (
+            lowerUrl.includes(".mp4") ||
+            lowerUrl.includes("video") ||
+            lowerUrl.includes("vid_") ||
+            lowerUrl.includes("_v") ||
+            lowerUrl.includes("mime=video") ||
+            (isReel && result.url_list.length === 1)
+          );
+            
           return {
             url: mediaUrl,
             type: isVideo ? "video" : "image",
