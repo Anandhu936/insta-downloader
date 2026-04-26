@@ -44,18 +44,26 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const contentType =
-      response.headers.get("content-type") || "application/octet-stream";
-    const buffer = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    
+    // If we get HTML instead of media, it means Instagram is blocking the proxy
+    if (contentType.includes("text/html") && !decoded.includes(".html")) {
+      return NextResponse.json(
+        { error: "Instagram is blocking the server request. Try downloading directly by right-clicking the preview." },
+        { status: 403 }
+      );
+    }
 
     const download = searchParams.get("download") === "true";
     
-    return new NextResponse(buffer, {
+    // Use the response body directly as a stream for better reliability
+    return new NextResponse(response.body, {
       status: 200,
       headers: {
         "Content-Type": contentType,
         "Content-Disposition": download ? "attachment" : "inline",
         "Cache-Control": download ? "no-store" : "public, max-age=86400",
+        "Content-Length": response.headers.get("content-length") || "",
       },
     });
   } catch (error) {
