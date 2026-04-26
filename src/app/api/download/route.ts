@@ -59,96 +59,138 @@ async function tryFetch(url: string, retries = 2): Promise<any> {
 
 /**
  * Fallback fetch using manual scraping if the library fails
- * This is a simplified version and might not catch all cases
+ * This is a sophisticated version that tries multiple endpoints
  */
 async function fallbackFetch(url: string): Promise<MediaItem[] | null> {
-  try {
-    console.log(`[API] Attempting fallback fetch for: ${url}`);
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-      },
-    });
+  const tryEndpoints = [
+    url, // Main URL
+    url.endsWith("/") ? `${url}embed/` : `${url}/embed/`, // Embed URL (often less protected)
+    url.endsWith("/") ? `${url}?__a=1&__d=dis` : `${url}/?__a=1&__d=dis`, // JSON endpoint (highly rate-limited)
+  ];
 
-    if (!response.ok) return null;
-    const html = await response.text();
+  for (const endpoint of tryEndpoints) {
+    try {
+      console.log(`[API] Trying endpoint: ${endpoint}`);
+      const response = await fetch(endpoint, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,video/mp4,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Referer": "https://www.instagram.com/",
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "cross-site",
+        },
+      });
 
-    let mediaItems: MediaItem[] = [];
+      if (!response.ok) {
+        console.warn(`[API] Endpoint ${endpoint} returned status ${response.status}`);
+        continue;
+      }
 
-    const isReel = url.includes("/reel/") || url.includes("/reels/");
+      const html = await response.text();
+      const mediaItems: MediaItem[] = [];
+      const isReel = url.includes("/reel/") || url.includes("/reels/");
 
-    // Try to find JSON data structures that contain all media (including carousels)
-    const jsonMatches = [
-      ...html.matchAll(/"display_url":"([^"]*)"/g),
-      ...html.matchAll(/"video_url":"([^"]*)"/g)
-    ];
+      // 1. Try to find JSON-like data structures for videos
+      const videoMatches = [
+        ...html.matchAll(/"video_url":"([^"]*)"/g),
+        ...html.matchAll(/"video_src":"([^"]*)"/g),
+        ...html.matchAll(/video_url:\s*'([^']*)'/g),
+        ...html.matchAll(/video_url:\s*"([^"]*)"/g),
+        ...html.matchAll(/"video_url"\s*:\s*"([^"]+)"/g),
+      ];
 
-    if (jsonMatches.length > 0) {
-      const uniqueUrls = new Set<string>();
-      jsonMatches.forEach(match => {
-        const url = match[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-        if (!uniqueUrls.has(url)) {
-          uniqueUrls.add(url);
-          const isVideo = url.includes(".mp4") || url.includes("video") || url.includes("mime=video");
-          
-          // Only add if we don't have it yet, or if it's a video (preferring videos)
-          mediaItems.push({ url, type: isVideo ? "video" : "image" });
+      if (videoMatches.length > 0) {
+        const seenUrls = new Set<string>();
+        for (const match of videoMatches) {
+          let videoUrl = match[1].replace(/\\u0026/g, "&").replace(/\\/g, "");
+          if (videoUrl.startsWith("http") && !seenUrls.has(videoUrl)) {
+            seenUrls.add(videoUrl);
+            mediaItems.push({ url: videoUrl, type: "video" });
+          }
         }
-      });
-    }
-
-    // Heuristic for carousels: Instagram often lists many display_resources
-    // We should filter to keep only the highest resolution ones
-    if (mediaItems.length > 1) {
-      // Filter out duplicates and keep unique URLs
-      const seen = new Set();
-      mediaItems = mediaItems.filter(item => {
-        const k = item.url.split('?')[0]; // Use base URL as key
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-    }
-
-    // 1. Check og:video tags (if not found in JSON)
-    if (mediaItems.length === 0) {
-      const videoMetaMatch = 
-        html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/i) ||
-        html.match(/<meta[^>]*property="og:video:secure_url"[^>]*content="([^"]*)"/i);
-      
-      if (videoMetaMatch && videoMetaMatch[1]) {
-        mediaItems.push({
-          url: videoMetaMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&"),
-          type: "video",
-        });
       }
-    }
 
-    // 2. Check og:image tags (if not found in JSON)
-    if (mediaItems.length === 0) {
-      const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
-      if (imageMatch && imageMatch[1]) {
-        const imageUrl = imageMatch[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-        const isVideo = imageUrl.includes(".mp4") || imageUrl.includes("video") || isReel;
-        mediaItems.push({
-          url: imageUrl,
-          type: isVideo ? "video" : "image",
-        });
+      // 2. Try to find images (if we haven't found everything or for carousels)
+      const imageMatches = [
+        ...html.matchAll(/"display_url":"([^"]*)"/g),
+        ...html.matchAll(/"display_src":"([^"]*)"/g),
+        ...html.matchAll(/display_url:\s*'([^']*)'/g),
+      ];
+
+      if (imageMatches.length > 0) {
+        const seenUrls = new Set<string>();
+        for (const match of imageMatches) {
+          let imageUrl = match[1].replace(/\\u0026/g, "&").replace(/\\/g, "");
+          // Check if this is a video URL being mislabeled or just a high-res image
+          const isActuallyVideo = imageUrl.includes(".mp4") || imageUrl.includes("video") || imageUrl.includes("mime=video");
+          
+          if (imageUrl.startsWith("http") && !seenUrls.has(imageUrl)) {
+            seenUrls.add(imageUrl);
+            // If we already have videos, only add if it's a high-res image we don't have
+            if (isActuallyVideo) {
+              mediaItems.push({ url: imageUrl, type: "video" });
+            } else if (mediaItems.length === 0 || !isReel) {
+              mediaItems.push({ url: imageUrl, type: "image" });
+            }
+          }
+        }
       }
+
+      // 3. Check Meta Tags (last resort for this endpoint)
+      if (mediaItems.length === 0) {
+        const ogVideo = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/i) ||
+                        html.match(/<meta[^>]*property="og:video:secure_url"[^>]*content="([^"]*)"/i) ||
+                        html.match(/"video_url":"([^"]*)"/);
+        
+        if (ogVideo && ogVideo[1]) {
+          mediaItems.push({
+            url: ogVideo[1].replace(/\\u0026/g, "&").replace(/\\/g, ""),
+            type: "video"
+          });
+        }
+
+        const ogImage = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
+        if (ogImage && ogImage[1] && mediaItems.length === 0) {
+          mediaItems.push({
+            url: ogImage[1].replace(/\\u0026/g, "&").replace(/\\/g, ""),
+            type: isReel ? "video" : "image" // For reels, og:image is often all we get if blocked
+          });
+        }
+      }
+
+      if (mediaItems.length > 0) {
+        // Clean and filter duplicates
+        const unique = new Map<string, MediaItem>();
+        mediaItems.forEach(item => {
+          try {
+            const baseUrl = new URL(item.url).pathname;
+            // Prefer videos over images for the same path
+            if (!unique.has(baseUrl) || item.type === "video") {
+              unique.set(baseUrl, item);
+            }
+          } catch {
+            unique.set(item.url, item);
+          }
+        });
+
+        const finalItems = Array.from(unique.values());
+        
+        // If it's a reel, make sure we return at least one video if found
+        if (isReel && !finalItems.some(i => i.type === "video")) {
+          // If we found something that looks like an image but it's a reel, label it carefully
+          // but we already handled that in the meta tag section
+        }
+
+        if (finalItems.length > 0) return finalItems;
+      }
+    } catch (error) {
+      console.warn(`[API] Failed to scrape endpoint ${endpoint}:`, error);
     }
-    
-    return mediaItems.length > 0 ? mediaItems : null;
-  } catch (error) {
-    console.error("[API] Fallback fetch error:", error);
-    return null;
   }
+
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -253,6 +295,17 @@ export async function POST(req: NextRequest) {
       if (fallbackResult) {
         mediaItems = fallbackResult;
         console.log(`[API] Fallback success: Found ${mediaItems.length} items.`);
+      }
+    }
+
+    // Secondary fallback: Try removing query params and trailing slashes if still nothing
+    if (mediaItems.length === 0) {
+      const cleanUrl = url.replace(/\/$/, "");
+      if (cleanUrl !== url) {
+        const secondFallback = await fallbackFetch(cleanUrl);
+        if (secondFallback) {
+          mediaItems = secondFallback;
+        }
       }
     }
 
