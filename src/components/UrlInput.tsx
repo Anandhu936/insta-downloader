@@ -63,7 +63,7 @@ export default function UrlInput({ onFetch, isLoading }: UrlInputProps) {
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="Paste Instagram URL here (post, reel, story...)"
+          placeholder="Paste Post or Reel URL (e.g. instagram.com/p/...)"
           disabled={isLoading}
           className="glass-input w-full rounded-2xl pl-14 pr-[180px] py-5 text-base text-white placeholder-gray-500 focus:placeholder-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           autoComplete="off"

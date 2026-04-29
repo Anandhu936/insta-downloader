@@ -15,12 +15,35 @@ function isValidInstagramUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
+    const validHosts = [
+      "www.instagram.com",
+      "instagram.com",
+      "instagr.am",
+      "www.instagr.am"
+    ];
+    
+    if (!validHosts.includes(host)) return false;
+
+    // Check if it's a post, reel, tv, or story
+    const path = parsed.pathname;
     return (
-      host === "www.instagram.com" ||
-      host === "instagram.com" ||
-      host === "instagr.am" ||
-      host === "www.instagr.am"
+      path.startsWith("/p/") || 
+      path.startsWith("/reel/") || 
+      path.startsWith("/reels/") || 
+      path.startsWith("/tv/") ||
+      path.startsWith("/stories/")
     );
+  } catch {
+    return false;
+  }
+}
+
+function isProfileUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.split('/').filter(Boolean);
+    // Profile URL is usually just domain.com/username/
+    return path.length === 1 && !["p", "reel", "reels", "tv", "stories", "explore", "reels"].includes(path[0]);
   } catch {
     return false;
   }
@@ -229,9 +252,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (isProfileUrl(url)) {
+      return NextResponse.json(
+        { 
+          error: "You entered a profile link. Please enter a link to a specific Post, Reel, or Story.",
+          suggestion: "Example: https://www.instagram.com/p/C-abc123XYZ/"
+        },
+        { status: 400 }
+      );
+    }
+
     if (!isValidInstagramUrl(url)) {
       return NextResponse.json(
-        { error: "Please enter a valid Instagram URL." },
+        { error: "Please enter a valid Instagram Post or Reel URL." },
         { status: 400 }
       );
     }
