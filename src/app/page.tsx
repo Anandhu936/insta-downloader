@@ -103,7 +103,9 @@ export default function HomePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch media.");
+        let msg = data.error || "Failed to fetch media.";
+        if (data.suggestion) msg += ` ${data.suggestion}`;
+        throw new Error(msg);
       }
 
       const downloadResult = data as DownloadResult;
@@ -177,8 +179,8 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto mb-12 leading-relaxed">
-            Save any public Instagram reel, video, or photo to your device —
-            instantly and for free. No account required.
+            Save any public Instagram reel, video, or photo to your device. 
+            Paste a link to a <span className="text-white font-medium">specific post</span> to get started.
           </p>
 
           {/* Input */}
@@ -340,7 +342,7 @@ export default function HomePage() {
               },
               {
                 q: "What types of content can I download?",
-                a: "You can download public posts (photos & videos), reels, carousel posts (multiple images/videos), and IGTV content.",
+                a: "You can download public posts (photos & videos), reels, carousel posts, and stories. Note: Downloading entire profiles or profile pictures is not currently supported — please use a link to a specific post.",
               },
               {
                 q: "Is this safe and legal?",
