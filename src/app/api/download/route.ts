@@ -54,13 +54,13 @@ function isProfileUrl(url: string): boolean {
 // Tries multiple RapidAPI Instagram services in sequence.
 // If one fails or returns empty results, the next is attempted.
 
-/** API 1: instagram-downloader-download-instagram-videos-stories */
+/** API 1: social-media-video-downloader (supports Instagram reels/posts) */
 async function fetchViaRapidAPI1(url: string, apiKey: string): Promise<MediaItem[] | null> {
-  const host = "instagram-downloader-download-instagram-videos-stories.p.rapidapi.com";
+  const host = "social-media-video-downloader.p.rapidapi.com";
   try {
     console.log("[RapidAPI-1] Fetching:", url);
     const response = await fetch(
-      `https://${host}/index?url=${encodeURIComponent(url)}`,
+      `https://${host}/smvd/get/all?url=${encodeURIComponent(url)}`,
       {
         method: "GET",
         headers: {
@@ -78,32 +78,18 @@ async function fetchViaRapidAPI1(url: string, apiKey: string): Promise<MediaItem
     const data = await response.json();
     console.log("[RapidAPI-1] Raw response:", JSON.stringify(data).slice(0, 600));
 
+    // Response: { success: true, links: [{ link, quality, mimeType }] }
+    if (!data?.success || !Array.isArray(data?.links) || data.links.length === 0) return null;
+
     const mediaItems: MediaItem[] = [];
     const isReel = url.includes("/reel/") || url.includes("/reels/");
 
-    // Structure: { media: string } or { media: [ { url, type } ] } or { url: string }
-    if (data?.media) {
-      if (typeof data.media === "string") {
-        const isVideo = data.media.includes(".mp4") || data.media.includes("video") || isReel;
-        mediaItems.push({ url: data.media, type: isVideo ? "video" : "image" });
-      } else if (Array.isArray(data.media)) {
-        for (const m of data.media) {
-          const mediaUrl = m.url || m;
-          if (!mediaUrl || typeof mediaUrl !== "string") continue;
-          const isVideo = mediaUrl.includes(".mp4") || mediaUrl.includes("video") || m.type === "video";
-          mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
-        }
-      }
-    } else if (data?.url && typeof data.url === "string") {
-      const isVideo = data.url.includes(".mp4") || data.url.includes("video") || isReel;
-      mediaItems.push({ url: data.url, type: isVideo ? "video" : "image" });
-    } else if (Array.isArray(data)) {
-      for (const item of data) {
-        const mediaUrl = item.url || item.download_url || item.src;
-        if (!mediaUrl) continue;
-        const isVideo = mediaUrl.includes(".mp4") || mediaUrl.includes("video");
-        mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
-      }
+    for (const item of data.links) {
+      const mediaUrl = item.link;
+      if (!mediaUrl || typeof mediaUrl !== "string") continue;
+      const mime = (item.mimeType || "").toLowerCase();
+      const isVideo = mime.includes("video") || mediaUrl.includes(".mp4") || mediaUrl.includes("video");
+      mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
     }
 
     if (isReel) {
@@ -117,13 +103,13 @@ async function fetchViaRapidAPI1(url: string, apiKey: string): Promise<MediaItem
   }
 }
 
-/** API 2: instagram-looter2 */
+/** API 2: instagram-looter2 — correct endpoint is /post-dl */
 async function fetchViaRapidAPI2(url: string, apiKey: string): Promise<MediaItem[] | null> {
   const host = "instagram-looter2.p.rapidapi.com";
   try {
     console.log("[RapidAPI-2] Fetching:", url);
     const response = await fetch(
-      `https://${host}/post?link=${encodeURIComponent(url)}`,
+      `https://${host}/post-dl?url=${encodeURIComponent(url)}`,
       {
         method: "GET",
         headers: {
@@ -144,9 +130,8 @@ async function fetchViaRapidAPI2(url: string, apiKey: string): Promise<MediaItem
     const mediaItems: MediaItem[] = [];
     const isReel = url.includes("/reel/") || url.includes("/reels/");
 
-    // Structure varies; common shapes:
-    // { medias: [{ url, type }] } or { data: { video_url, display_url } }
-    const medias = data?.medias || data?.data?.medias || data?.items || [];
+    // Actual response: { type: "video", media: [{ url, type }], caption, owner }
+    const medias = data?.media || data?.medias || data?.items || [];
     if (Array.isArray(medias) && medias.length > 0) {
       for (const m of medias) {
         const mediaUrl = m.url || m.src || m.download_url;
@@ -154,10 +139,8 @@ async function fetchViaRapidAPI2(url: string, apiKey: string): Promise<MediaItem
         const isVideo = m.type === "video" || mediaUrl.includes(".mp4") || mediaUrl.includes("video");
         mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
       }
-    } else if (data?.data?.video_url) {
-      mediaItems.push({ url: data.data.video_url, type: "video" });
-    } else if (data?.data?.display_url) {
-      mediaItems.push({ url: data.data.display_url, type: isReel ? "video" : "image" });
+    } else if (data?.type === "video" && data?.url) {
+      mediaItems.push({ url: data.url, type: "video" });
     }
 
     if (isReel) {
