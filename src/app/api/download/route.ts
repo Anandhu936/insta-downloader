@@ -50,37 +50,150 @@ function isProfileUrl(url: string): boolean {
   }
 }
 
-// ─── RapidAPI Primary Method ───────────────────────────────────────────────
-// Uses instagram120.p.rapidapi.com which routes through residential proxies
-// and works reliably from Vercel / cloud hosting.
-async function fetchViaRapidAPI(url: string): Promise<MediaItem[] | null> {
-  const apiKey = process.env.RAPIDAPI_KEY;
-  if (!apiKey || apiKey === "your_rapidapi_key_here") {
-    console.warn("[RapidAPI] No RAPIDAPI_KEY set, skipping.");
+// ─── RapidAPI Methods ──────────────────────────────────────────────────────
+// Tries multiple RapidAPI Instagram services in sequence.
+// If one fails or returns empty results, the next is attempted.
+
+/** API 1: instagram-downloader-download-instagram-videos-stories */
+async function fetchViaRapidAPI1(url: string, apiKey: string): Promise<MediaItem[] | null> {
+  const host = "instagram-downloader-download-instagram-videos-stories.p.rapidapi.com";
+  try {
+    console.log("[RapidAPI-1] Fetching:", url);
+    const response = await fetch(
+      `https://${host}/index?url=${encodeURIComponent(url)}`,
+      {
+        method: "GET",
+        headers: {
+          "x-rapidapi-host": host,
+          "x-rapidapi-key": apiKey,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn("[RapidAPI-1] Response not OK:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("[RapidAPI-1] Raw response:", JSON.stringify(data).slice(0, 600));
+
+    const mediaItems: MediaItem[] = [];
+    const isReel = url.includes("/reel/") || url.includes("/reels/");
+
+    // Structure: { media: string } or { media: [ { url, type } ] } or { url: string }
+    if (data?.media) {
+      if (typeof data.media === "string") {
+        const isVideo = data.media.includes(".mp4") || data.media.includes("video") || isReel;
+        mediaItems.push({ url: data.media, type: isVideo ? "video" : "image" });
+      } else if (Array.isArray(data.media)) {
+        for (const m of data.media) {
+          const mediaUrl = m.url || m;
+          if (!mediaUrl || typeof mediaUrl !== "string") continue;
+          const isVideo = mediaUrl.includes(".mp4") || mediaUrl.includes("video") || m.type === "video";
+          mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
+        }
+      }
+    } else if (data?.url && typeof data.url === "string") {
+      const isVideo = data.url.includes(".mp4") || data.url.includes("video") || isReel;
+      mediaItems.push({ url: data.url, type: isVideo ? "video" : "image" });
+    } else if (Array.isArray(data)) {
+      for (const item of data) {
+        const mediaUrl = item.url || item.download_url || item.src;
+        if (!mediaUrl) continue;
+        const isVideo = mediaUrl.includes(".mp4") || mediaUrl.includes("video");
+        mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
+      }
+    }
+
+    if (isReel) {
+      const videos = mediaItems.filter((i) => i.type === "video");
+      if (videos.length > 0) return videos;
+    }
+    return mediaItems.length > 0 ? mediaItems : null;
+  } catch (error) {
+    console.error("[RapidAPI-1] Error:", error);
     return null;
   }
+}
 
+/** API 2: instagram-looter2 */
+async function fetchViaRapidAPI2(url: string, apiKey: string): Promise<MediaItem[] | null> {
+  const host = "instagram-looter2.p.rapidapi.com";
   try {
-    console.log("[RapidAPI] Fetching:", url);
-    const response = await fetch("https://instagram120.p.rapidapi.com/api/instagram/links", {
+    console.log("[RapidAPI-2] Fetching:", url);
+    const response = await fetch(
+      `https://${host}/post?link=${encodeURIComponent(url)}`,
+      {
+        method: "GET",
+        headers: {
+          "x-rapidapi-host": host,
+          "x-rapidapi-key": apiKey,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn("[RapidAPI-2] Response not OK:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("[RapidAPI-2] Raw response:", JSON.stringify(data).slice(0, 600));
+
+    const mediaItems: MediaItem[] = [];
+    const isReel = url.includes("/reel/") || url.includes("/reels/");
+
+    // Structure varies; common shapes:
+    // { medias: [{ url, type }] } or { data: { video_url, display_url } }
+    const medias = data?.medias || data?.data?.medias || data?.items || [];
+    if (Array.isArray(medias) && medias.length > 0) {
+      for (const m of medias) {
+        const mediaUrl = m.url || m.src || m.download_url;
+        if (!mediaUrl) continue;
+        const isVideo = m.type === "video" || mediaUrl.includes(".mp4") || mediaUrl.includes("video");
+        mediaItems.push({ url: mediaUrl, type: isVideo ? "video" : "image" });
+      }
+    } else if (data?.data?.video_url) {
+      mediaItems.push({ url: data.data.video_url, type: "video" });
+    } else if (data?.data?.display_url) {
+      mediaItems.push({ url: data.data.display_url, type: isReel ? "video" : "image" });
+    }
+
+    if (isReel) {
+      const videos = mediaItems.filter((i) => i.type === "video");
+      if (videos.length > 0) return videos;
+    }
+    return mediaItems.length > 0 ? mediaItems : null;
+  } catch (error) {
+    console.error("[RapidAPI-2] Error:", error);
+    return null;
+  }
+}
+
+/** API 3: instagram120 (original) */
+async function fetchViaRapidAPI3(url: string, apiKey: string): Promise<MediaItem[] | null> {
+  const host = "instagram120.p.rapidapi.com";
+  try {
+    console.log("[RapidAPI-3] Fetching:", url);
+    const response = await fetch(`https://${host}/api/instagram/links`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-rapidapi-host": "instagram120.p.rapidapi.com",
+        "x-rapidapi-host": host,
         "x-rapidapi-key": apiKey,
       },
       body: JSON.stringify({ url }),
     });
 
     if (!response.ok) {
-      console.warn("[RapidAPI] Response not OK:", response.status);
+      console.warn("[RapidAPI-3] Response not OK:", response.status);
       return null;
     }
 
     const data = await response.json();
-    console.log("[RapidAPI] Raw response:", JSON.stringify(data).slice(0, 500));
+    console.log("[RapidAPI-3] Raw response:", JSON.stringify(data).slice(0, 600));
 
-    // Response is an array of media items, each with a `urls` array
     if (!Array.isArray(data) || data.length === 0) return null;
 
     const mediaItems: MediaItem[] = [];
@@ -88,32 +201,17 @@ async function fetchViaRapidAPI(url: string): Promise<MediaItem[] | null> {
 
     for (const item of data) {
       if (!item.urls || !Array.isArray(item.urls)) continue;
-
       for (const u of item.urls) {
         if (!u.url) continue;
-
-        // Some URLs are relative paths — prefix them
-        const fullUrl = u.url.startsWith("/")
-          ? `https://instagram120.p.rapidapi.com${u.url}`
-          : u.url;
-
+        const fullUrl = u.url.startsWith("/") ? `https://${host}${u.url}` : u.url;
         const ext = (u.extension || "").toLowerCase();
         const name = (u.name || "").toLowerCase();
-
         const isVideo =
-          ext === "mp4" ||
-          name === "mp4" ||
-          fullUrl.includes(".mp4") ||
-          fullUrl.includes("video");
-
-        mediaItems.push({
-          url: fullUrl,
-          type: isVideo ? "video" : "image",
-        });
+          ext === "mp4" || name === "mp4" || fullUrl.includes(".mp4") || fullUrl.includes("video");
+        mediaItems.push({ url: fullUrl, type: isVideo ? "video" : "image" });
       }
     }
 
-    // For reels, prefer MP4 entries; filter out duplicates by URL
     const seen = new Set<string>();
     const unique = mediaItems.filter((item) => {
       if (seen.has(item.url)) return false;
@@ -121,17 +219,45 @@ async function fetchViaRapidAPI(url: string): Promise<MediaItem[] | null> {
       return true;
     });
 
-    // Prioritize: if reel and we have both video + image, keep video only
     if (isReel) {
       const videos = unique.filter((i) => i.type === "video");
       if (videos.length > 0) return videos;
     }
-
     return unique.length > 0 ? unique : null;
   } catch (error) {
-    console.error("[RapidAPI] Fetch error:", error);
+    console.error("[RapidAPI-3] Error:", error);
     return null;
   }
+}
+
+/** Orchestrator: tries all 3 RapidAPI methods in order */
+async function fetchViaRapidAPI(url: string): Promise<MediaItem[] | null> {
+  const apiKey = process.env.RAPIDAPI_KEY;
+  if (!apiKey || apiKey === "your_rapidapi_key_here") {
+    console.warn("[RapidAPI] No RAPIDAPI_KEY set, skipping.");
+    return null;
+  }
+
+  const result1 = await fetchViaRapidAPI1(url, apiKey);
+  if (result1 && result1.length > 0) {
+    console.log("[RapidAPI] API-1 succeeded:", result1.length, "item(s)");
+    return result1;
+  }
+
+  const result2 = await fetchViaRapidAPI2(url, apiKey);
+  if (result2 && result2.length > 0) {
+    console.log("[RapidAPI] API-2 succeeded:", result2.length, "item(s)");
+    return result2;
+  }
+
+  const result3 = await fetchViaRapidAPI3(url, apiKey);
+  if (result3 && result3.length > 0) {
+    console.log("[RapidAPI] API-3 succeeded:", result3.length, "item(s)");
+    return result3;
+  }
+
+  console.warn("[RapidAPI] All 3 APIs failed or returned empty.");
+  return null;
 }
 
 // ─── Legacy Library Method ─────────────────────────────────────────────────
